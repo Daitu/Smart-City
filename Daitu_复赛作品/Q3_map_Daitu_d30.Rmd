@@ -1,0 +1,463 @@
+---
+title: "展示惩罚"
+author: "带土"
+date: "2016年8月31日"
+output:
+  html_document: 
+    toc: true
+    toc_float: false
+    code_folding: hide
+    highlight: zenburn
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,message = FALSE,warning = FALSE,
+                      fig.width = 9.5,fig.height = 6)
+options(stringsAsFactors = FALSE,scipen = 99)
+rm(list=ls());gc()
+
+setwd("/Users/daitu/数据分析/天池/0830智慧物流城市末端配送")
+getwd()
+
+## 加载需要的包####------------------------------------------------
+library(readr)
+library(dplyr)
+library(stringr)
+library(ggplot2)
+library(plotly)
+library(leaflet)
+library(RColorBrewer)
+
+
+```
+
+阿里云天池公益云图可视化大赛
+
+
+队伍：Daitu   ；  队长：孙玉林  ； 学校：中北大学
+
+
+**问题3:展示惩罚**
+
+
+**使用数据为0830更新的数据**
+
+
+# 智慧物流城市末端配送
+
+电商的蓬勃发展使得目前很大一部分的物流包裹均来源于线上电商订单。在中国，该比例
+超过了60%。这些包裹在配送的最后环节，是由快递员将包裹从网点送到消费者手中。另
+一方面，随着互联网逐渐向线下渗透，涌现出了越来越多的同城包裹配送需求，如外卖订
+单或鲜花蛋糕等等同城订单。这两类包裹的配送是目前中国最后一公里配送中最典型的场
+景。
+
+
+
+
+
+# 读取数据
+```{r}
+## 读入数据####----------------------------------------------------
+## 网点id 及经纬度，共124 个网点
+# Site_id  网点id（e.g.A001）
+# Lng      网点经度
+# Lat      网点纬度
+col_type1 <- list(col_character(),col_double(),col_double())
+new1 <- read_csv("new_1.csv",col_names = FALSE,col_types = col_type1)
+colnames(new1) <- c("Site_id","Lng","Lat")
+
+## 配送点id 及经纬度，共9214 个配送点
+# Spot_id    配送点id（e.g.B0001）
+# Lng        配送点经度
+# Lat        配送点纬度
+col_type1 <- list(col_character(),col_double(),col_double())
+new2 <- read_csv("new_2.csv",col_names = FALSE,col_types = col_type1)
+colnames(new2) <- c("Spot_id","Lng","Lat")
+# ## 对数据重新排序
+# new2 <- new2[order(new2$Spot_id),]
+## 商户id 及经纬度，共598 个商户
+# Shop_id    商户id（e.g.S001）
+# Lng        商户经度
+# Lat        商户纬度
+col_type1 <- list(col_character(),col_double(),col_double())
+new3 <- read_csv("new_3.csv",col_names = FALSE,col_types = col_type1)
+colnames(new3) <- c("Shop_id","Lng","Lat")
+
+## 电商订单，共9214 笔电商订单，总包裹量为229780
+# Order_id    订单id（e.g.F0001）
+# Spot_id     配送点id
+# Site_id     网点id
+# Num         网点需要送至改配送点的电商包裹量
+col_type1 <- list(col_character(),col_character(),col_character(),col_integer())
+new4 <- read_csv("new_4.csv",col_names = FALSE,col_types = col_type1)
+colnames(new4) <- c("Order_id","Spot_id","Site_id","Num")
+
+## 同城O2O 订单,共3273 笔O2O 订单，总包裹量为8856
+# Order_id        订单id（e.g.E0001）
+# Spot_id         配送点id
+# Shop_id         商户id
+# Pickup_time     到商户的领取时间（e.g.11:00）
+# Delivery_time   送达至消费者的最晚时间（e.g.20:00）
+# Num             订单所含包裹量
+col_type1 <- list(col_character(),col_character(),col_character(),
+                  col_guess(),col_guess(),col_integer())
+col_type1 <- list(col_character(),col_character(),col_character(),
+                  col_character(),col_character(),col_integer())
+new5 <- read_csv("new_5.csv",col_names = FALSE,col_types = col_type1)
+colnames(new5) <- c("Order_id","Spot_id","Shop_id","Pickup_time","Delivery_time","Num")
+# new5$Pickup_time <- base::as.Date(new5$Pickup_time,format = "%H:%M")
+# as.Date(format(new5$Pickup_time,format = "%R"))
+
+##------------------------------------------------------------------
+## 字符串时间离早8:00的时长-----------------------------------------
+timereduce <- function(strtime1,strtime2 = "8:00"){
+  ## 该函数用来一天中24小时制的时间相减运算，的到相差多少分钟
+  ## strtime1:用来减的较大时间，为字符串，例如："16:39"
+  ## strtime2:用来被减的较小时间，为字符串,例如："8:00"
+  # strtime1 <- aa
+  # strtime2 <- "8:00"
+  ## 切分字符串
+  timvec <- as.numeric(unlist(str_split(c(strtime1,strtime2),pattern = ":")))
+  if (timvec[1] < timvec[3]) {
+    print("第一个时间字符串需要晚于第二个时间字符串")
+  }
+  else{
+    return((timvec[1]-timvec[3])*60+timvec[2]-timvec[4])
+  }
+}
+##------------------------------------------------------------------
+## 计算时间到8:00的时长
+# new5df <- as.data.frame(new5)
+apply(new5[c("Pickup_time","Delivery_time")],1:2,timereduce) %>%
+  as.data.frame() %>%
+  tbl_df() -> new5[c("Pickup_time","Delivery_time")]
+
+
+
+
+## 快递员id 列表，最多1000 位小件员
+# Courier_id    快递员id（e.g.D0001）
+
+new6 <- read_csv("new_6.csv",col_names = TRUE)
+colnames(new6) <- c("Courier_id")
+
+## 快递员的调度计划（example.csv）
+# Courier_id          快递员id
+# Addr                网点或配送点或商户id
+# Arrival_time    到达时长（距离08:00 时长分钟数.e.g.到达时刻为11:00，则到达时间为180）
+# Departure       离开时长（距离08:00 时长分钟数.e.g.离开时刻为15:00，则离开时间为420）
+# Amount          取/送货量（取为+，送为 - )
+# Order_id        订单id
+col_type1 <- list(col_character(),col_character(),col_integer(),col_integer(),
+                  col_integer(),col_character())
+example <- read_csv("example.csv",col_names = FALSE,col_types = col_type1)
+colnames(example) <- c("Courier_id","Addr","Arrival_time","Departure",
+                       "Amount","Order_id")
+
+
+
+
+```
+
+# 针对同城O2O订单的惩罚
+
+可以将惩罚分为4种类型：
+
+1. ShopA :没有在指定时间前到达商户,指定时间前到达消费者
+2. ShopB ：在指定时间前到达商户，但没有在指定时间前到达消费者
+3. ShopB : 两项均未再指定时间内完成
+4. ShopD : 没有惩罚，均在指定时间之前
+
+## 查看同城O2O订单惩罚的频数分布
+
+```{r}
+##  关于同城O2O订单的惩罚展示####----------------------------------------
+## 数据准备
+## 联合快递员取包裹时间
+O2O_data <- dplyr::left_join(new5,example[example$Amount > 0,],by = "Order_id")
+## 联合快递员送到包裹的时间
+O2O_data <- dplyr::left_join(O2O_data,example[example$Amount < 0,],by = "Order_id")
+
+## 定义惩罚类型 ------------------------------------------------
+# ShopA :没有在指定时间前到达商户,指定时间到达消费者
+# ShopB ：在指定时间前到达商户，但没有在指定时间前到达消费者
+# ShopB : 两项均未再指定时间内完成
+# ShopD : 没有惩罚，均在指定时间之前
+ShopA_O2O <- O2O_data[(O2O_data$Arrival_time.x  > O2O_data$Pickup_time)&
+                        (O2O_data$Arrival_time.y <= O2O_data$Delivery_time),]
+ShopA_O2O$Group <- "ShopA"
+
+ShopB_O2O <- O2O_data[(O2O_data$Arrival_time.x  <= O2O_data$Pickup_time)&
+                        (O2O_data$Arrival_time.y > O2O_data$Delivery_time),]
+ShopB_O2O$Group <- "ShopB"
+ShopC_O2O <- O2O_data[(O2O_data$Arrival_time.x  > O2O_data$Pickup_time)&
+                        (O2O_data$Arrival_time.y > O2O_data$Delivery_time),]
+ShopC_O2O$Group <- "ShopC"
+ShopD_O2O <- O2O_data[(O2O_data$Arrival_time.x  <= O2O_data$Pickup_time)&
+                        (O2O_data$Arrival_time.y <= O2O_data$Delivery_time),]
+ShopD_O2O$Group <- "ShopD"
+
+O2O_data <- rbind(ShopA_O2O,ShopB_O2O,ShopC_O2O,ShopD_O2O)
+## 惩罚类型的分布
+p1 <- ggplot(data = as.data.frame(table(O2O_data$Group))) +
+  theme_bw(base_family = "STKaiti") +
+  geom_bar(aes(Var1,Freq),stat = "identity",fill = "lightblue",
+           alpha = 0.9,position = "stack") +
+  scale_x_discrete(labels = c("惩罚A","惩罚B","惩罚C","无惩罚"))+ 
+  labs(x = "惩罚类型",y = "订单数目(个)",title = "O2O订单的惩罚情况")
+ggplotly(p1)
+
+```
+
+## 查看同城O2O惩罚订单的配送情况
+```{r}
+## O2O惩罚累想订单的地图显示#### -------------------------------------------
+
+## 数据准备
+## 数据的融合####---------------------------------------------------------
+## 网点数据－－包裹数量
+Site_bagnum <- new4%>%
+  dplyr::group_by(Site_id) %>%
+  summarise(bagnum = sum(Num))
+Site_data <- dplyr::left_join(new1,Site_bagnum,by = "Site_id")
+Site_data$info <- paste("网点:",Site_data$Site_id,";",
+                        "包裹:",Site_data$bagnum,"个",sep = "")
+
+## 配送点数据
+Spot_bagnum <- new4%>%
+  dplyr::group_by(Spot_id)%>%
+  summarise(bag_num = sum(Num))
+Spot_o2onum <- new5%>%
+  dplyr::group_by(Spot_id)%>%
+  summarise(o2o_num = sum(Num))
+Spot_num <- dplyr::left_join(Spot_bagnum,Spot_o2onum,by = "Spot_id")
+## 将Na转化味0
+Spot_num[which(is.na(Spot_num[,3])),3] <- 0
+Spot_data <- dplyr::left_join(new2,Spot_num,by = "Spot_id")
+## 添加变量
+Spot_data$all_num <- Spot_data$bag_num + Spot_data$o2o_num
+Spot_data$info <- paste("配送点:",Spot_data$Spot_id,";",
+                        "电商包裹:",Spot_data$bag_num,";",
+                        "O2O包裹:",Spot_data$o2o_num,sep = "")
+
+## 商户数据
+shop_num <- new5%>%
+  dplyr::group_by(Shop_id)%>%
+  summarise(o2o_num = sum(Num))
+Shop_data <- dplyr::left_join(new3,shop_num,by = "Shop_id")
+Shop_data$info <- paste("商户:",Shop_data$Shop_id,";",
+                        "包裹:",Shop_data$o2o_num,"个",sep = "")
+
+## 展示配送随时间的变化情况----------------------------------------
+## 快递配送数据整理
+new1$group <- "Site"
+colnames(new1) <- c("ID","Lng","Lat","Group")
+new2$group <- "Spot"
+colnames(new2) <- c("ID","Lng","Lat","Group")
+new3$group <- "Shop"
+colnames(new3) <- c("ID","Lng","Lat","Group")
+Site_Spot_shop <- rbind(new1,new2,new3)
+## 给配送数据添加经纬度数据等
+example_new <- dplyr::left_join(example,Site_Spot_shop,by = c("Addr" = "ID"))
+## 给配送数据添加包裹数量数据
+Order_data <- rbind(new4[,c(1,4)],new5[,c(1,6)])
+example_new <- dplyr::left_join(example_new,Order_data,by = "Order_id")
+
+
+fly_line <- example_new %>%
+  dplyr::group_by(Courier_id,Addr,Order_id) %>%
+  summarise(Lng = unique(Lng),
+            Lat = unique(Lat),
+            Group = unique(Group),
+            Num = sum(Num),
+            Amount = sum(Amount))
+
+stra_point <- fly_line[!(fly_line$Group == "Spot"),]
+end_point <- fly_line[(fly_line$Group == "Spot"),]
+fly_line_data <- dplyr::left_join(stra_point,end_point,by = c("Courier_id","Order_id"))
+fly_line_Shop <- fly_line_data[fly_line_data$Group.x == "Shop",]
+fly_line_Shop <- dplyr::left_join(fly_line_Shop,O2O_data[c("Order_id","Group")],by = "Order_id")
+fly_line_Shop$info <- paste("快递员:",fly_line_Shop$Courier_id,";",
+                            fly_line_Shop$Addr.x,"->",fly_line_Shop$Addr.y,
+                            ";","惩罚类型:",fly_line_Shop$Group,sep = "")
+
+
+## 商户是否由惩罚交互地图####----------------------------
+centers <- c(mean(Site_data$Lng),mean(Site_data$Lat))
+map3 <- leaflet(data = Site_data,width = 800, height = 600) %>%
+  setView(lng = centers[1],lat = centers[2],zoom = 10) %>%
+  addTiles() %>% addProviderTiles("Acetate.terrain") %>%
+  addCircleMarkers(lng = Spot_data$Lng,lat = Spot_data$Lat,
+                   stroke = FALSE,group = "配送点",color = "red",
+                   fillOpacity = 0.8,radius = ~(Spot_data$all_num/30),
+                   popup = ~(Spot_data$info)) %>%
+  addCircleMarkers(lng = Shop_data$Lng,lat = Shop_data$Lat,
+                   stroke = FALSE,group = "商户",color = "blue",
+                   fillOpacity = 0.8,radius = ~(Shop_data$o2o_num / 10),
+                   popup = ~(Shop_data$info)) 
+## 惩罚A
+fly_line_ShopA <- fly_line_Shop[fly_line_Shop$Group == "ShopA",]
+for (i in 1:nrow(fly_line_ShopA)) {
+  map3 <- addPolylines(map3,data = fly_line_ShopA,
+                       lng = as.numeric(fly_line_ShopA[i,c("Lng.x","Lng.y")]),
+                       lat = as.numeric(fly_line_ShopA[i,c("Lat.x","Lat.y")]),
+                       color = "cyan",fillOpacity = 1,
+                       stroke = TRUE,group = "惩罚A",
+                       popup = ~(fly_line_ShopA$info[i]))
+}
+## 惩罚A
+fly_line_ShopB <- fly_line_Shop[fly_line_Shop$Group == "ShopB",]
+for (i in 1:nrow(fly_line_ShopB)) {
+  map3 <- addPolylines(map3,data = fly_line_ShopB,
+                       lng = as.numeric(fly_line_ShopB[i,c("Lng.x","Lng.y")]),
+                       lat = as.numeric(fly_line_ShopB[i,c("Lat.x","Lat.y")]),
+                       color = "lightblue",fillOpacity = 0.8,
+                       stroke = TRUE,group = "惩罚B",
+                       popup = ~(fly_line_ShopB$info[i]))
+}
+## 惩罚C
+fly_line_ShopC <- fly_line_Shop[fly_line_Shop$Group == "ShopC",]
+for (i in 1:nrow(fly_line_ShopC)) {
+  map3 <- addPolylines(map3,data = fly_line_ShopC,
+                       lng = as.numeric(fly_line_ShopC[i,c("Lng.x","Lng.y")]),
+                       lat = as.numeric(fly_line_ShopC[i,c("Lat.x","Lat.y")]),
+                       color = "tomato",fillOpacity = 0.7,
+                       stroke = TRUE,group = "惩罚C",
+                       popup = ~(fly_line_ShopC$info[i]))
+}
+
+## 无惩罚
+fly_line_ShopD <- fly_line_Shop[fly_line_Shop$Group == "ShopD",]
+for (i in 1:nrow(fly_line_ShopD)) {
+  map3 <- addPolylines(map3,data = fly_line_ShopD,
+                       lng = as.numeric(fly_line_ShopD[i,c("Lng.x","Lng.y")]),
+                       lat = as.numeric(fly_line_ShopD[i,c("Lat.x","Lat.y")]),
+                       color = "lawngreen",fillOpacity = 1,
+                       stroke = TRUE,group = "无惩罚",
+                       popup = ~(fly_line_ShopD$info[i]))
+}
+map3 <- addLayersControl(map3,overlayGroups = c("配送点","商户","惩罚A",
+                                                "惩罚B","惩罚C","无惩罚"),
+                         options = layersControlOptions(collapsed = FALSE),
+                         position = "topleft")  
+map3
+
+
+```
+
+# 针对电商订单的惩罚
+
+电商订单的惩罚可以分为三种情况
+
+1. SiteA ：在20:00前到达网点,但没有在20:00到达消费者
+2. SiteB : 两项均未再指定时间内完成
+3. SiteC : 没有惩罚，均在指定时间之前
+
+##查看电商订单的惩罚情况的频数分布
+
+```{r}
+## 针对订单数据查看惩罚的情况####---------------------------------------
+
+## 联合快递员取包裹时间
+Site_datadd <- dplyr::left_join(new4,example[example$Amount > 0,],by = "Order_id")
+## 联合快递员送到包裹的时间
+Site_datadd <- dplyr::left_join(Site_datadd,example[example$Amount < 0,],by = "Order_id")
+## 定义惩罚类型 ------------------------------------------------
+# SiteA ：在20:00前到达网点,，但没有在20:00到达消费者
+# SiteB : 两项均未再指定时间内完成
+# SiteC : 没有惩罚，均在指定时间之前
+maxminus <- 720  #最大分钟数
+# SiteA_dd <- Site_data[(Site_data$Arrival_time.x  > maxminus),]
+# SiteA_dd$Group <- "SiteA"
+
+SiteA_dd <- Site_datadd[(Site_datadd$Arrival_time.x  <= maxminus)&
+                        (Site_datadd$Arrival_time.y > maxminus),]
+SiteA_dd$Group <- "SiteA"
+SiteB_dd <- Site_datadd[(Site_datadd$Arrival_time.x  > maxminus)&
+                        (Site_datadd$Arrival_time.y > maxminus),]
+SiteB_dd$Group <- "SiteB"
+SiteC_dd <- Site_datadd[(Site_datadd$Arrival_time.x  <=  maxminus)&
+                        (Site_datadd$Arrival_time.y <=  maxminus),]
+SiteC_dd$Group <- "SiteC"
+
+Site_datadd <- rbind(SiteA_dd,SiteB_dd,SiteC_dd)
+## 惩罚类型的分布
+p1 <- ggplot(data = as.data.frame(table(Site_datadd$Group))) +
+  theme_bw(base_family = "STKaiti") +
+  geom_bar(aes(Var1,Freq),stat = "identity",fill = "lightblue",
+           alpha = 1,position = "stack") +
+  scale_x_discrete(labels = c("惩罚A","惩罚B","无惩罚"))+ 
+  labs(x = "惩罚类型",y = "订单数目(个)",title = "电商订单的惩罚情况")
+ggplotly(p1)
+
+
+```
+
+## 查看电商惩罚订单的配送情况
+
+```{r}
+## 可视化电商订单是否有惩罚####------------------------------------------
+
+fly_line_Site <- fly_line_data[fly_line_data$Group.x == "Site",]
+fly_line_Site <- dplyr::left_join(fly_line_Site,Site_datadd[c("Order_id","Group")],by = "Order_id")
+fly_line_Site$info <- paste("快递员:",fly_line_Site$Courier_id,";",
+                            fly_line_Site$Addr.x,"->",fly_line_Site$Addr.y,
+                            ";","惩罚类型:",fly_line_Site$Group,sep = "")
+
+## 地图可视化
+centers <- c(mean(Site_data$Lng),mean(Site_data$Lat))
+map4 <- leaflet(data = Site_data,width = 800, height = 600) %>%
+  setView(lng = centers[1],lat = centers[2],zoom = 10) %>%
+  addTiles() %>% addProviderTiles("Acetate.terrain") %>%
+  addCircleMarkers(lng = Site_data$Lng, lat = Site_data$Lat,
+                   stroke = FALSE,group = "网点",color = "green",
+                   fillOpacity = 0.9,radius = ~(Site_data$bagnum / 300),
+                   popup = ~(Site_data$info)) %>%
+  addCircleMarkers(lng = Spot_data$Lng,lat = Spot_data$Lat,
+                   stroke = FALSE,group = "配送点",color = "red",
+                   fillOpacity = 0.8,radius = ~(Spot_data$all_num/30),
+                   popup = ~(Spot_data$info)) 
+  
+## 惩罚A
+fly_line_SiteA <- fly_line_Site[fly_line_Site$Group == "SiteA",]
+for (i in 1:nrow(fly_line_SiteA)) {
+  map4 <- addPolylines(map4,data = fly_line_SiteA,
+                       lng = as.numeric(fly_line_SiteA[i,c("Lng.x","Lng.y")]),
+                       lat = as.numeric(fly_line_SiteA[i,c("Lat.x","Lat.y")]),
+                       color = "cyan",fillOpacity = 1,
+                       stroke = TRUE,group = "惩罚A",
+                       popup = ~(fly_line_SiteA$info[i]))
+}
+## 惩罚B
+fly_line_SiteB <- fly_line_Site[fly_line_Site$Group == "SiteB",]
+for (i in 1:nrow(fly_line_SiteB)) {
+  map4 <- addPolylines(map4,data = fly_line_SiteB,
+                       lng = as.numeric(fly_line_SiteB[i,c("Lng.x","Lng.y")]),
+                       lat = as.numeric(fly_line_SiteB[i,c("Lat.x","Lat.y")]),
+                       color = "blue",fillOpacity = 0.6,
+                       stroke = TRUE,group = "惩罚B",
+                       popup = ~(fly_line_SiteB$info[i]))
+}
+## 无惩罚
+fly_line_SiteC <- fly_line_Site[fly_line_Site$Group == "SiteC",]
+for (i in 1:nrow(fly_line_SiteC)) {
+  map4 <- addPolylines(map4,data = fly_line_SiteC,
+                       lng = as.numeric(fly_line_SiteC[i,c("Lng.x","Lng.y")]),
+                       lat = as.numeric(fly_line_SiteC[i,c("Lat.x","Lat.y")]),
+                       color = "lawngreen",fillOpacity = 0.7,
+                       stroke = TRUE,group = "无惩罚",
+                       popup = ~(fly_line_SiteC$info[i]))
+}
+
+map4 <- addLayersControl(map4,overlayGroups = c("网点","配送点","惩罚A",
+                                                "惩罚B","无惩罚"),
+                         options = layersControlOptions(collapsed = FALSE),
+                         position = "topleft")  
+map4
+
+
+
+```
+
+
+

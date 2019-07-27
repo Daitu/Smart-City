@@ -1,0 +1,428 @@
+## 智慧物流城市末端配送
+## 中北大学
+## Daitu
+## 2016-8-31
+
+## 使用数据为8.30更新的数据
+## 该部分主要用来探索数据，查看数据的整体情况
+
+
+## 更改工作文件夹####----------------------------------------------
+rm(list = ls());gc()
+
+## 
+default_options <- options()
+options(default_options)
+
+setwd("/Users/daitu/数据分析/天池/0830智慧物流城市末端配送")
+getwd()
+
+
+## 加载需要的包####------------------------------------------------
+library(readr)
+library(zoo)
+library(REmap)
+library(leaflet)
+library(dplyr)
+library(htmltools)
+library(plotly)
+library(ggplot2)
+library(gridExtra)
+
+## 读入数据####----------------------------------------------------
+## 网点id 及经纬度，共124 个网点
+# Site_id  网点id（e.g.A001）
+# Lng      网点经度
+# Lat      网点纬度
+col_type1 <- list(col_character(),col_double(),col_double())
+new1 <- read_csv("new_1.csv",col_names = FALSE,col_types = col_type1)
+colnames(new1) <- c("Site_id","Lng","Lat")
+
+## 配送点id 及经纬度，共9214 个配送点
+# Spot_id    配送点id（e.g.B0001）
+# Lng        配送点经度
+# Lat        配送点纬度
+col_type1 <- list(col_character(),col_double(),col_double())
+new2 <- read_csv("new_2.csv",col_names = FALSE,col_types = col_type1)
+colnames(new2) <- c("Spot_id","Lng","Lat")
+# ## 对数据重新排序
+# new2 <- new2[order(new2$Spot_id),]
+## 商户id 及经纬度，共598 个商户
+# Shop_id    商户id（e.g.S001）
+# Lng        商户经度
+# Lat        商户纬度
+col_type1 <- list(col_character(),col_double(),col_double())
+new3 <- read_csv("new_3.csv",col_names = FALSE,col_types = col_type1)
+colnames(new3) <- c("Shop_id","Lng","Lat")
+
+## 电商订单，共9214 笔电商订单，总包裹量为229780
+# Order_id    订单id（e.g.F0001）
+# Spot_id     配送点id
+# Site_id     网点id
+# Num         网点需要送至改配送点的电商包裹量
+col_type1 <- list(col_character(),col_character(),col_character(),col_integer())
+new4 <- read_csv("new_4.csv",col_names = FALSE,col_types = col_type1)
+colnames(new4) <- c("Order_id","Spot_id","Site_id","Num")
+
+## 同城O2O 订单,共3273 笔O2O 订单，总包裹量为8856
+# Order_id        订单id（e.g.E0001）
+# Spot_id         配送点id
+# Shop_id         商户id
+# Pickup_time     到商户的领取时间（e.g.11:00）
+# Delivery_time   送达至消费者的最晚时间（e.g.20:00）
+# Num             订单所含包裹量
+col_type1 <- list(col_character(),col_character(),col_character(),
+                  col_guess(),col_guess(),col_integer())
+new5 <- read_csv("new_5.csv",col_names = FALSE,col_types = col_type1)
+colnames(new5) <- c("Order_id","Spot_id","Shop_id","Pickup_time","Delivery_time","Num")
+# new5$Pickup_time <- base::as.Date(new5$Pickup_time,format = "%H:%M")
+# as.Date(format(new5$Pickup_time,format = "%R"))
+
+
+## 快递员id 列表，最多1000 位小件员
+# Courier_id    快递员id（e.g.D0001）
+
+new6 <- read_csv("new_6.csv",col_names = TRUE)
+colnames(new6) <- c("Courier_id")
+
+## 快递员的调度计划（example.csv）
+# Courier_id          快递员id
+# Addr                网点或配送点或商户id
+# Arrival_time    到达时长（距离08:00 时长分钟数.e.g.到达时刻为11:00，则到达时间为180）
+# Departure       离开时长（距离08:00 时长分钟数.e.g.离开时刻为15:00，则离开时间为420）
+# Amount          取/送货量（取为+，送为 - )
+# Order_id        订单id
+col_type1 <- list(col_character(),col_character(),col_integer(),col_integer(),
+                  col_integer(),col_character())
+example <- read_csv("example.csv",col_names = FALSE,col_types = col_type1)
+colnames(example) <- c("Courier_id","Addr","Arrival_time","Departure",
+                       "Amount","Order_id")
+## 数据的融合####---------------------------------------------------------
+## 网点数据－－包裹数量
+Site_bagnum <- new4%>%
+  dplyr::group_by(Site_id) %>%
+  summarise(bagnum = sum(Num))
+Site_data <- dplyr::left_join(new1,Site_bagnum,by = "Site_id")
+Site_data$info <- paste("网点:",Site_data$Site_id,";",
+                        "包裹:",Site_data$bagnum,"个",sep = "")
+summary(Site_data)
+
+## 配送点数据
+Spot_bagnum <- new4%>%
+  dplyr::group_by(Spot_id)%>%
+  summarise(bag_num = sum(Num))
+Spot_o2onum <- new5%>%
+  dplyr::group_by(Spot_id)%>%
+  summarise(o2o_num = sum(Num))
+Spot_num <- dplyr::left_join(Spot_bagnum,Spot_o2onum,by = "Spot_id")
+## 将Na转化味0
+Spot_num[which(is.na(Spot_num[,3])),3] <- 0
+Spot_data <- dplyr::left_join(new2,Spot_num,by = "Spot_id")
+## 添加变量
+Spot_data$all_num <- Spot_data$bag_num + Spot_data$o2o_num
+Spot_data$info <- paste("配送点:",Spot_data$Spot_id,";",
+                        "电商包裹:",Spot_data$bag_num,";",
+                        "O2O包裹:",Spot_data$o2o_num,sep = "")
+summary(Spot_data)
+
+## 商户数据
+shop_num <- new5%>%
+  dplyr::group_by(Shop_id)%>%
+  summarise(o2o_num = sum(Num))
+Shop_data <- dplyr::left_join(new3,shop_num,by = "Shop_id")
+Shop_data$info <- paste("商户:",Shop_data$Shop_id,";",
+                        "包裹:",Shop_data$o2o_num,"个",sep = "")
+summary(Shop_data)
+
+## 展示网点、配送点、商户的静态地图####--------------------------------------------------
+
+options(default_options)
+centers <- c(mean(Site_data$Lng),mean(Site_data$Lat))
+## 网点、配送点、商户的分布地图
+map <- leaflet(data = Site_data,width = 800, height = 600) %>%
+  setView(lng = centers[1],lat = centers[2],zoom = 10) %>%
+  addTiles() %>% addProviderTiles("Acetate.terrain") %>%
+  addCircleMarkers(lng = Site_data$Lng, lat = Site_data$Lat,
+                   stroke = FALSE,group = "网点",color = "yellow",
+                   fillOpacity = 0.9,radius = 6) %>%
+  addCircleMarkers(lng = Spot_data$Lng,lat = Spot_data$Lat,
+                   stroke = FALSE,group = "配送点",color = "red",
+                   fillOpacity = 0.8,radius = 1.5) %>%
+  addCircleMarkers(lng = Shop_data$Lng,lat = Shop_data$Lat,
+                   stroke = FALSE,group = "商户",color = "blue",
+                   fillOpacity = 0.8,radius = 4)
+map
+
+
+
+
+## 网点、配送点、商户交互地图
+map <- leaflet(data = Site_data,width = 800, height = 600) %>%
+  setView(lng = centers[1],lat = centers[2],zoom = 10) %>%
+  addTiles() %>% addProviderTiles("Acetate.terrain") %>%
+  addCircleMarkers(lng = Site_data$Lng, lat = Site_data$Lat,
+                   stroke = FALSE,group = "网点",color = "green",
+                   fillOpacity = 0.9,radius = ~(Site_data$bagnum / 300),
+                   popup = ~(Site_data$info)) %>%
+  addCircleMarkers(lng = Spot_data$Lng,lat = Spot_data$Lat,
+                   stroke = FALSE,group = "配送点",color = "red",
+                   fillOpacity = 0.8,radius = ~(Spot_data$all_num/30),
+                   popup = ~(Spot_data$info)) %>%
+  addCircleMarkers(lng = Shop_data$Lng,lat = Shop_data$Lat,
+                   stroke = FALSE,group = "商户",color = "blue",
+                   fillOpacity = 0.8,radius = ~(Shop_data$o2o_num / 10),
+                   popup = ~(Shop_data$info)) %>%
+  addLayersControl(overlayGroups = c("网点","配送点","商户"),
+                   options = layersControlOptions(collapsed = FALSE),
+                   position = "topleft")
+
+map
+
+
+## 展示配送随时间的变化情况####----------------------------------------
+## 快递配送数据整理
+new1$group <- "Site"
+colnames(new1) <- c("ID","Lng","Lat","Group")
+new2$group <- "Spot"
+colnames(new2) <- c("ID","Lng","Lat","Group")
+new3$group <- "Shop"
+colnames(new3) <- c("ID","Lng","Lat","Group")
+Site_Spot_shop <- rbind(new1,new2,new3)
+## 给配送数据添加经纬度数据等
+example_new <- dplyr::left_join(example,Site_Spot_shop,by = c("Addr" = "ID"))
+## 给配送数据添加包裹数量数据
+Order_data <- rbind(new4[,c(1,4)],new5[,c(1,6)])
+example_new <- dplyr::left_join(example_new,Order_data,by = "Order_id")
+summary(example_new)
+## 将到达时间分组
+bydata <- 30   #分组的间隔时间半小时
+example_new$arrive_time <- cut(example_new$Arrival_time,
+                               breaks = seq(0,max(example_new$Arrival_time)+bydata-1,by = bydata),
+                               include.lowest = TRUE)
+## 定义超时的数据
+example_new$departure <- cut(example_new$Departure,
+                             breaks = seq(0,max(example_new$Departure)+bydata-1,by = bydata),
+                             include.lowest = TRUE)
+
+## 包裹的变化情况－－按照到达时长分组
+bag_arrive <- example_new %>%
+  dplyr::group_by(Group,arrive_time) %>%
+  summarise(Courier_num = length(unique(Courier_id)), ##快递员人数
+            Amount_sum = sum(Amount),  ## 
+            bag_num = sum(Num),## 包裹个数
+            order_num = n_distinct(Order_id))
+
+## 对到达时长数据可视化####----------------------------------------
+## 直方图
+## 静态直方图
+p1 <- ggplot(bag_arrive,aes(fill = Group)) +
+  theme_bw(base_family = "STKaiti") +
+  geom_bar(aes(arrive_time,bag_num),stat = "identity",alpha = 0.9,position = "stack") +
+  theme(axis.text.x = element_blank()) + 
+  geom_vline(xintercept = 24,color = "red") +
+  labs(x = "到达时长(分钟)",y = "包裹数量(个)",title = "包裹变化情况")
+p2 <- ggplot(bag_arrive,aes(fill = Group)) +
+  theme_bw(base_family = "STKaiti") +
+  geom_bar(aes(arrive_time,Courier_num),stat = "identity",alpha = 0.9) +
+  theme(axis.text.x = element_blank()) +
+  geom_vline(xintercept = 24,color = "red") +
+  labs(x = "到达时长(分钟)",y = "快递员数量(个)",title = "快递员变化情况")
+p3 <- ggplot(bag_arrive,aes(fill = Group)) +
+  theme_bw(base_family = "STKaiti") +
+  geom_bar(aes(arrive_time,order_num),stat = "identity",alpha = 0.9) +
+  scale_x_discrete(labels = seq(0,max(example_new$Arrival_time)+bydata-1,by = bydata) + bydata)+
+  theme(axis.text.x = element_text(angle = 90)) +
+  geom_vline(xintercept = 24,color = "red") +
+  labs(x = "到达时长(分钟)",y = "订单数量(个)",title = "订单变化情况")
+a <- grid.arrange(p1,p2,p3,nrow = 3)
+
+## 可交互图像
+p1 <- ggplot(bag_arrive,aes(fill = Group)) +
+  theme_bw(base_family = "STKaiti") +
+  geom_bar(aes(arrive_time,bag_num),stat = "identity",alpha = 0.9,position = "stack") +
+  theme(axis.text.x = element_text(angle = 90)) + 
+  geom_vline(xintercept = 24,color = "red") +
+  labs(x = "到达时长(分钟)",y = "包裹数量(个)",title = "包裹变化情况")
+ggplotly(p1)
+
+p2 <- ggplot(bag_arrive,aes(fill = Group)) +
+  theme_bw(base_family = "STKaiti") +
+  geom_bar(aes(arrive_time,Courier_num),stat = "identity",alpha = 0.9) +
+  theme(axis.text.x = element_text(angle = 90)) +
+  geom_vline(xintercept = 24,color = "red") +
+  labs(x = "到达时长(分钟)",y = "快递员数量(个)",title = "快递员变化情况")
+ggplotly(p2)
+
+p3 <- ggplot(bag_arrive,aes(fill = Group)) +
+  theme_bw(base_family = "STKaiti") +
+  geom_bar(aes(arrive_time,order_num),stat = "identity",alpha = 0.9) +
+  scale_x_discrete(labels = seq(0,max(example_new$Arrival_time)+bydata-1,by = bydata) + bydata)+
+  theme(axis.text.x = element_text(angle = 90)) +
+  geom_vline(xintercept = 24,color = "red") +
+  labs(x = "到达时长(分钟)",y = "订单数量(个)",title = "订单变化情况")
+ggplotly(p3)
+
+
+
+## 对离开时长数据可视化####----------------------------------------
+## 直方图
+## 静态直方图
+## 包裹的变化情况－－按照离开时长分组
+## 整理数据
+bag_departure <- example_new %>%
+  dplyr::group_by(Group,departure) %>%
+  summarise(Courier_num = n_distinct(Courier_id), ##快递员人数
+            Amount_sum = sum(Amount),  ## 
+            bag_num = sum(Num),## 包裹个数
+            order_num = n_distinct(Order_id)) #订单数量
+
+## 可视化
+p1 <- ggplot(bag_departure,aes(fill = Group)) +
+  theme_bw(base_family = "STKaiti") +
+  geom_bar(aes(departure,bag_num),stat = "identity",alpha = 0.9,position = "stack") +
+  theme(axis.text.x = element_blank()) + 
+  geom_vline(xintercept = 24,color = "red") +
+  labs(x = "到达时长(分钟)",y = "包裹数量(个)",title = "包裹变化情况")
+p2 <- ggplot(bag_departure,aes(fill = Group)) +
+  theme_bw(base_family = "STKaiti") +
+  geom_bar(aes(departure,Courier_num),stat = "identity",alpha = 0.9) +
+  theme(axis.text.x = element_blank()) +
+  geom_vline(xintercept = 24,color = "red") +
+  labs(x = "到达时长(分钟)",y = "快递员数量(个)",title = "快递员变化情况")
+p3 <- ggplot(bag_departure,aes(fill = Group)) +
+  theme_bw(base_family = "STKaiti") +
+  geom_bar(aes(departure,order_num),stat = "identity",alpha = 0.9) +
+  scale_x_discrete(labels = seq(0,max(example_new$Departure)+bydata-1,by = bydata) + bydata)+
+  theme(axis.text.x = element_text(angle = 90)) +
+  geom_vline(xintercept = 24,color = "red") +
+  labs(x = "到达时长(分钟)",y = "订单数量(个)",title = "订单变化情况")
+a <- grid.arrange(p1,p2,p3,nrow = 3)
+
+## 可交互图像
+p1 <- ggplot(bag_departure,aes(fill = Group)) +
+  theme_bw(base_family = "STKaiti") +
+  geom_bar(aes(departure,bag_num),stat = "identity",alpha = 0.9,position = "stack") +
+  theme(axis.text.x = element_text(angle = 90)) + 
+  geom_vline(xintercept = 24,color = "red") +
+  labs(x = "到达时长(分钟)",y = "包裹数量(个)",title = "包裹变化情况")
+ggplotly(p1)
+
+p2 <- ggplot(bag_departure,aes(fill = Group)) +
+  theme_bw(base_family = "STKaiti") +
+  geom_bar(aes(departure,Courier_num),stat = "identity",alpha = 0.9) +
+  theme(axis.text.x = element_text(angle = 90)) +
+  geom_vline(xintercept = 24,color = "red") +
+  labs(x = "到达时长(分钟)",y = "快递员数量(个)",title = "快递员变化情况")
+ggplotly(p2)
+
+p3 <- ggplot(bag_departure,aes(fill = Group)) +
+  theme_bw(base_family = "STKaiti") +
+  geom_bar(aes(departure,order_num),stat = "identity",alpha = 0.9) +
+  scale_x_discrete(labels = seq(0,max(example_new$Departure)+bydata-1,by = bydata) + bydata)+
+  theme(axis.text.x = element_text(angle = 90)) +
+  geom_vline(xintercept = 24,color = "red") +
+  labs(x = "到达时长(分钟)",y = "订单数量(个)",title = "订单变化情况")
+ggplotly(p3)
+
+
+
+## 展示订单流####------------------------------------------
+## 配送点数据
+
+fly_line <- example_new %>%
+  dplyr::group_by(Courier_id,Addr) %>%
+  summarise(Lng = unique(Lng),
+            Lat = unique(Lat),
+            Group = unique(Group),
+            Num = sum(Num),
+            Amount = sum(Amount))
+
+stra_point <- fly_line[!(fly_line$Group == "Spot"),]
+end_point <- fly_line[(fly_line$Group == "Spot"),]
+fly_line_data <- dplyr::left_join(stra_point,end_point,by = "Courier_id")
+
+## 绘制订单运动地图####-----------------------------
+
+map2 <- leaflet(data = fly_line_data,width = 800, height = 600) %>%
+  setView(lng = centers[1],lat = centers[2],zoom = 10) %>%
+  addTiles() %>% addProviderTiles("Acetate.terrain") %>%
+  addCircleMarkers(lng = Site_data$Lng, lat = Site_data$Lat,
+                   stroke = FALSE,group = "网点",color = "lawngreen",
+                   fillOpacity = 0.9,radius = 6) %>%
+  addCircleMarkers(lng = Spot_data$Lng,lat = Spot_data$Lat,
+                   stroke = FALSE,group = "配送点",color = "red",
+                   fillOpacity = 0.8,radius = 1.5) %>%
+  addCircleMarkers(lng = Shop_data$Lng,lat = Shop_data$Lat,
+                   stroke = FALSE,group = "商户",color = "blue",
+                   fillOpacity = 0.8,radius = 8)
+## 配置点的飞线
+fly_line_Site <- fly_line_data[fly_line_data$Group.x == "Site",]
+for (i in 1:nrow(fly_line_Site)) {
+  map2 <- addPolylines(map2,data = fly_line_Site,
+                       lng = as.numeric(fly_line_Site[i,c("Lng.x","Lng.y")]),
+                       lat = as.numeric(fly_line_Site[i,c("Lat.x","Lat.y")]),
+                       color = "cyan",fillOpacity = 1,
+                       stroke = TRUE,group = "网点-配送点")
+}
+
+## 商户的飞线
+fly_line_Shop <- fly_line_data[fly_line_data$Group.x == "Shop",]
+
+for (i in 1:nrow(fly_line_Shop)) {
+  map2 <- addPolylines(map2,data = fly_line_Shop,
+                       lng = as.numeric(fly_line_Shop[i,c("Lng.x","Lng.y")]),
+                       lat = as.numeric(fly_line_Shop[i,c("Lat.x","Lat.y")]),
+                       color = "lawngreen",fillOpacity = 1,
+                       stroke = TRUE,group = "商户-配送点")
+}
+map2 <- addLayersControl(map2,overlayGroups = c("网点","配送点","商户","网点-配送点","商户-配送点"),
+                         options = layersControlOptions(collapsed = FALSE),
+                         position = "topleft")  
+map2
+
+
+## 网点、配送点、商户，路线交互地图####----------------------------
+map3 <- leaflet(data = Site_data,width = 800, height = 600) %>%
+  setView(lng = centers[1],lat = centers[2],zoom = 10) %>%
+  addTiles() %>% addProviderTiles("Acetate.terrain") %>%
+  addCircleMarkers(lng = Site_data$Lng, lat = Site_data$Lat,
+                   stroke = FALSE,group = "网点",color = "green",
+                   fillOpacity = 0.9,radius = ~(Site_data$bagnum / 300),
+                   popup = ~(Site_data$info)) %>%
+  addCircleMarkers(lng = Spot_data$Lng,lat = Spot_data$Lat,
+                   stroke = FALSE,group = "配送点",color = "red",
+                   fillOpacity = 0.8,radius = ~(Spot_data$all_num/30),
+                   popup = ~(Spot_data$info)) %>%
+  addCircleMarkers(lng = Shop_data$Lng,lat = Shop_data$Lat,
+                   stroke = FALSE,group = "商户",color = "blue",
+                   fillOpacity = 0.8,radius = ~(Shop_data$o2o_num / 10),
+                   popup = ~(Shop_data$info)) 
+## 配置点的飞线
+fly_line_Site <- fly_line_data[fly_line_data$Group.x == "Site",]
+fly_line_Site$info <- paste("快递员:",fly_line_Site$Courier_id,";",
+                            fly_line_Site$Addr.x,"->",fly_line_Site$Addr.y,sep = "")
+for (i in 1:nrow(fly_line_Site)) {
+  map3 <- addPolylines(map3,data = fly_line_Site,
+                       lng = as.numeric(fly_line_Site[i,c("Lng.x","Lng.y")]),
+                       lat = as.numeric(fly_line_Site[i,c("Lat.x","Lat.y")]),
+                       color = "cyan",fillOpacity = 1,
+                       stroke = TRUE,group = "网点-配送点",
+                       popup = ~(fly_line_Site$info[i]))
+}
+## 商户的飞线
+fly_line_Shop <- fly_line_data[fly_line_data$Group.x == "Shop",]
+fly_line_Shop$info <- paste("快递员:",fly_line_Shop$Courier_id,";",
+                            fly_line_Shop$Addr.x,"->",fly_line_Shop$Addr.y,sep = "")
+for (i in 1:nrow(fly_line_Shop)) {
+  map3 <- addPolylines(map3,data = fly_line_Shop,
+                       lng = as.numeric(fly_line_Shop[i,c("Lng.x","Lng.y")]),
+                       lat = as.numeric(fly_line_Shop[i,c("Lat.x","Lat.y")]),
+                       color = "lawngreen",fillOpacity = 1,
+                       stroke = TRUE,group = "商户-配送点",
+                       popup = ~(fly_line_Shop$info[i]))
+}
+map3 <- addLayersControl(map3,overlayGroups = c("网点","配送点","商户","网点-配送点","商户-配送点"),
+                         options = layersControlOptions(collapsed = FALSE),
+                         position = "topleft")  
+map3
+
